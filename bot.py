@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import time
 import uuid
+import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
@@ -19,8 +20,8 @@ from datetime import datetime
 # Инициализация бота и диспетчера
 API_TOKEN = 'bot_token'
 ADMIN_ID = 'admin_id'
-YOOMONEY_TOKEN = 'yoomoney_token'
-YOOMONEY_WALLET = 'yoomoney_wallet'
+YOOMONEY_TOKEN = 'asd'
+YOOMONEY_WALLET = 'asd2'
 
 bot = Bot(token=API_TOKEN)
 client = Client(YOOMONEY_TOKEN)
@@ -223,57 +224,65 @@ async def pay_with_card(message: types.Message, state: FSMContext):
     await message.answer(f"Для оплаты перейдите по ссылке: {payment_url}\nПосле оплаты бот автоматически подтвердит ваш платеж.", reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add("⬅️ Назад"))
 
     # Ожидание и проверка платежа
-    if await check_payment(message.from_user.id, duration, amount):
-        # Проверка, выдан ли ключ за текущий платеж
-        cursor.execute('SELECT key FROM issued_keys WHERE user_id = ? AND duration = ?', (message.from_user.id, duration))
-        existing_key = cursor.fetchone()
+    if await check_payment(payment_label):
+    
+        # Платеж прошел, выдаем новый ключ
+        cursor.execute('SELECT key FROM vpn_keys WHERE is_used = 0 AND duration = ? LIMIT 1', (duration,))
+        key = cursor.fetchone()
+        if key:
 
-        if existing_key:
-            # Ключ уже выдан за этот платеж
-            await message.answer("Ваш платеж подтвержден. Ключ уже был выдан для текущего платежа. Обратитесь в поддержку, если у вас возникли вопросы.")
+            cursor.execute('UPDATE vpn_keys SET is_used = 1 WHERE key = ?', (key[0],))
+            conn.commit()
+
+            # Добавляем запись в таблицу issued_keys
+            cursor.execute('INSERT INTO issued_keys (user_id, payment_label, key, issued) VALUES (?, ?, ?, ?)', (message.from_user.id, payment_label, key[0], True))
+            conn.commit()
+
+            # Отправка сообщения с ключом и инструкцией
+            keyboard = ReplyKeyboardMarkup(resize_keyboard=True).add("🗒 Инструкция по подключению")
+            await message.answer(
+            f"<b>Ваш платеж подтвержден.</b>\nВот ваш ключ на {duration} мес.: <code>{key[0]}</code>\n\n<b>❗️Нажмите на ключ, чтобы скопировать его❗️</b>\n\nИнструкция по подключению доступна по кнопке ниже.",
+            parse_mode='HTML',
+            reply_markup=keyboard
+                    )
         else:
-            # Платеж прошел, выдаем новый ключ
-            cursor.execute('SELECT key FROM vpn_keys WHERE is_used = 0 AND duration = ? LIMIT 1', (duration,))
-            key = cursor.fetchone()
-            if key:
-                cursor.execute('UPDATE vpn_keys SET is_used = 1 WHERE key = ?', (key[0],))
-                conn.commit()
-
-                # Добавляем запись в таблицу issued_keys
-                cursor.execute('INSERT INTO issued_keys (user_id, payment_label, key, issued) VALUES (?, ?, ?, ?)', (message.from_user.id, payment_label, key[0], True))
-                conn.commit()
-
-                # Отправка сообщения с ключом и инструкцией
-                keyboard = ReplyKeyboardMarkup(resize_keyboard=True).add("🗒 Инструкция по подключению")
-                await message.answer(
-                    f"<b>Ваш платеж подтвержден.</b>\nВот ваш ключ на {duration} мес.: <code>{key[0]}</code>\n\n<b>❗️Нажмите на ключ, чтобы скопировать его❗️</b>\n\nИнструкция по подключению доступна по кнопке ниже.",
-                    parse_mode='HTML',
-                    reply_markup=keyboard
-                )
-            else:
-                await message.answer("К сожалению, ключи закончились. Пожалуйста, свяжитесь с поддержкой.", reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add("⬅️ Назад"))
+            await message.answer("К сожалению, ключи закончились. Пожалуйста, свяжитесь с поддержкой.", reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add("⬅️ Назад"))
     else:
         await message.answer("Платеж не был завершен. Попробуйте снова или свяжитесь с поддержкой.", reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add("⬅️ Назад"))
-
     await state.finish()
 
-# Функция для проверки платежа
-async def check_payment(user_id, duration, amount):
-    amount = round(amount, 2)  # Округляем ожидаемую сумму до двух знаков после запятой
-    tolerance = 0.01  # Пороговое значение для учета возможной комиссии
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-    for _ in range(60):  # 60 попыток проверки платежа
-        history = client.operation_history(label=str(user_id))
-        successful_operations = []
+# Функция для проверки платежа
+async def check_payment(payment_label):
+    logger.info(f"Начинаем проверку платежа с меткой: {payment_label}")
+
+    for attempt in range(60):  # 60 попыток проверки платежа
+        logger.info(f"Попытка {attempt + 1} из 60")
+
+        try:
+            history = client.operation_history(label=payment_label)
+            logger.info(f"Ответ от API: {history}")  # Логирование полного ответа от API
+        except Exception as e:
+            logger.error(f"Ошибка при получении истории операций: {e}")
+            await asyncio.sleep(10)
+            continue
+
+        # Проверяем все операции в истории
+        found_success = False
         for operation in history.operations:
+            logger.debug(f"Операция: {operation}, Статус: {operation.status}")
             if operation.status == "success":
-                successful_operations.append(operation)
-        
-        for operation in successful_operations:
-            if abs(round(operation.amount, 2) - amount * 0.97) <= tolerance:  # Учитываем 3% комиссию
+                logger.info(f"Платеж с меткой {payment_label} успешно подтвержден.")
                 return True
-        
-        await asyncio.sleep(10)  # Проверка каждые 10 секунд
+
+        # Если платеж не найден, ждем перед следующей попыткой
+        logger.info(f"Платеж с меткой {payment_label} не найден, ждем 10 секунд перед следующей попыткой.")
+        await asyncio.sleep(10)
+
+    logger.warning(f"Платеж с меткой {payment_label} не был найден в течение 60 попыток.")
     return False
 
 # Обработка нажатия кнопки "🗒 Инструкция по подключению"
