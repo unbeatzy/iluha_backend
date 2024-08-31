@@ -125,9 +125,15 @@ async def on_shutdown(app):
     await dp.storage.close()
     await dp.storage.wait_closed()
 
+async def yoomoney_callback(request):
+    print('yoomoney_callback called')
+    return web.Response(text="Hello, world")
+
 
 if __name__ == '__main__':
     app = get_new_configured_app(dispatcher=dp, path=WEBHOOK_PATH)
+
+    app.add_routes([web.post('/yoomoney/callback', yoomoney_callback)])
 
     # Setup event handlers.
     app.on_startup.append(on_startup)
