@@ -1,0 +1,9 @@
+asyncio==3.4.3
+aiogram==2.25.1
+YooMoney==0.1.1
+httpcore==1.0.5
+httplib2==0.14.0
+httpx==0.27.0
+python-dotenv==1.0.1
+python-telegram-bot==21.4
+Flask==3.0.3
