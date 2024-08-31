@@ -7,7 +7,7 @@ API_TOKEN = os.getenv('API_TOKEN')
 ADMIN_ID = os.getenv('ADMIN_ID')
 YOOMONEY_TOKEN = os.getenv('YOOMONEY_TOKEN')
 YOOMONEY_WALLET = os.getenv('YOOMONEY_WALLET')
-DB_NAME = 'vpn_bot.db'
+DB_NAME = os.getenv('DB_NAME')
 
 WEBHOOK_PATH = os.getenv('WEBHOOK_PATH')
 WEBAPP_HOST = os.getenv('WEBAPP_HOST')
