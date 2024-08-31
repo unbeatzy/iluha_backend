@@ -1,9 +1,5 @@
 import sqlite3
-import re
-import requests
 import asyncio
-import hashlib
-import time
 import uuid
 import logging
 from aiogram import Bot, Dispatcher, types
@@ -16,12 +12,14 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from yoomoney import Client, Quickpay
 from datetime import datetime
+from dotenv import load_dotenv
+import os
+load_dotenv()
 
-# Инициализация бота и диспетчера
-API_TOKEN = 'bot_token'
-ADMIN_ID = 'admin_id'
-YOOMONEY_TOKEN = 'asd'
-YOOMONEY_WALLET = 'asd2'
+API_TOKEN = os.getenv('API_TOKEN')
+ADMIN_ID = os.getenv('ADMIN_ID')
+YOOMONEY_TOKEN = os.getenv('YOOMONEY_TOKEN')
+YOOMONEY_WALLET = os.getenv('YOOMONEY_WALLET')
 
 bot = Bot(token=API_TOKEN)
 client = Client(YOOMONEY_TOKEN)
