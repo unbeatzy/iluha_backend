@@ -95,17 +95,16 @@ async def on_startup(app):
 
     # This handler is available in all states at any time.
     dp.register_message_handler(cmd_about, commands=['help', 'about'], state='*')
-    dp.register_message_handler(unknown, content_types=BAD_CONTENT,
-                                func=lambda message: message.chat.type == ChatType.PRIVATE)
+    dp.register_message_handler(unknown, lambda message: message.chat.type == ChatType.PRIVATE, content_types=BAD_CONTENT)
 
     # You are able to register one function handler for multiple conditions
     dp.register_message_handler(cancel, commands=['cancel'], state='*')
-    dp.register_message_handler(cancel, func=lambda message: message.text.lower().strip() in ['cancel'], state='*')
+    dp.register_message_handler(cancel, lambda message: message.text.lower().strip() in ['cancel'], state='*')
 
     dp.register_message_handler(cmd_id, commands=['id'], state='*')
-    dp.register_message_handler(cmd_id, func=lambda message: message.forward_from or
-                                                             message.reply_to_message and
-                                                             message.chat.type == ChatType.PRIVATE, state='*')
+    dp.register_message_handler(cmd_id, lambda message: message.forward_from or
+                                                            message.reply_to_message and
+                                                            message.chat.type == ChatType.PRIVATE, state='*')
 
     # Get current webhook status
     webhook = await bot.get_webhook_info()
