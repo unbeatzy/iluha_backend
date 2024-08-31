@@ -10,16 +10,9 @@ from aiogram.utils import executor
 from aiogram.types.message import ContentType
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
+from constants import ADMIN_ID, API_TOKEN, DB_NAME, WEBAPP_HOST, WEBAPP_PORT, WEBHOOK_PATH, WEBHOOK_URL, YOOMONEY_TOKEN, YOOMONEY_WALLET
 from yoomoney import Client, Quickpay
 from datetime import datetime
-from dotenv import load_dotenv
-import os
-load_dotenv()
-
-API_TOKEN = os.getenv('API_TOKEN')
-ADMIN_ID = os.getenv('ADMIN_ID')
-YOOMONEY_TOKEN = os.getenv('YOOMONEY_TOKEN')
-YOOMONEY_WALLET = os.getenv('YOOMONEY_WALLET')
 
 bot = Bot(token=API_TOKEN)
 client = Client(YOOMONEY_TOKEN)
@@ -30,25 +23,8 @@ dp = Dispatcher(bot, storage=storage)
 dp.middleware.setup(LoggingMiddleware())
 
 # Подключение к базе данных
-conn = sqlite3.connect('vpn_bot.db')
+conn = sqlite3.connect(DB_NAME)
 cursor = conn.cursor()
-
-# Создание таблицы для ключей
-cursor.execute('''CREATE TABLE IF NOT EXISTS vpn_keys
-                 (id INTEGER PRIMARY KEY, key TEXT, duration INTEGER, is_used BOOLEAN)''')
-conn.commit()
-
-# Создание таблицы для пользователей
-cursor.execute('''CREATE TABLE IF NOT EXISTS users
-                 (id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, last_name TEXT, subscription_end_date TEXT)''')
-conn.commit()
-
-# Создание таблицы для выданных ключей
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS issued_keys
-    (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, payment_label TEXT, key TEXT, issued BOOLEAN, duration INTEGER)
-''')
-conn.commit()
 
 # Состояния для ожидания данных от администратора
 class AddKeysState(StatesGroup):
@@ -438,6 +414,31 @@ async def view_active_keys(message: types.Message):
     else:
         await message.answer("❌ У вас нет прав для выполнения этой команды. ❌")
 
+
+async def on_startup(dp):
+    await bot.set_webhook(WEBHOOK_URL)
+
+
+async def on_shutdown(dp):
+    logging.warning('Shutting down..')
+
+    conn.close()
+
+    await bot.delete_webhook()
+
+    await dp.storage.close()
+    await dp.storage.wait_closed()
+
+    logging.warning('Bye!')
+
 # Запуск бота
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    executor.start_webhook(
+        dispatcher=dp,
+        webhook_path=WEBHOOK_PATH,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        skip_updates=True,
+        host=WEBAPP_HOST,
+        port=WEBAPP_PORT,
+    )
