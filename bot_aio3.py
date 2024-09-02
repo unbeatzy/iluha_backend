@@ -11,10 +11,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.filters.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton
-from dotenv import load_dotenv
 from yoomoney import Client, Quickpay
+from constants import ADMIN_ID, API_TOKEN, DB_NAME, WEBAPP_HOST, WEBAPP_PORT, WEBHOOK_PATH, WEBHOOK_URL, YOOMONEY_TOKEN, YOOMONEY_WALLET
 
-load_dotenv()
 
 
 API_TOKEN = os.getenv('API_TOKEN')
@@ -26,30 +25,13 @@ YOOMONEY_WALLET = os.getenv('YOOMONEY_WALLET')
 bot = Bot(token=API_TOKEN)
 client = Client(YOOMONEY_TOKEN)
 
-# Инициализация хранилища состояний
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
-
 # Подключение к базе данных
 conn = sqlite3.connect('vpn_bot.db')
 cursor = conn.cursor()
 
-# Создание таблицы для ключей
-cursor.execute('''CREATE TABLE IF NOT EXISTS vpn_keys
-                 (id INTEGER PRIMARY KEY, key TEXT, duration INTEGER, is_used BOOLEAN)''')
-conn.commit()
-
-# Создание таблицы для пользователей
-cursor.execute('''CREATE TABLE IF NOT EXISTS users
-                 (id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, last_name TEXT, subscription_end_date TEXT)''')
-conn.commit()
-
-# Создание таблицы для выданных ключей
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS issued_keys
-    (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, payment_label TEXT, key TEXT, issued BOOLEAN, duration INTEGER)
-''')
-conn.commit()
+# Инициализация хранилища состояний
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 
 
 # Состояния для ожидания данных от администратора
@@ -103,8 +85,21 @@ async def send_welcome(message: types.Message):
 # Обработка нажатия кнопки "⬅️ Назад" для всех состояний
 @dp.message(F.text == "⬅️ Назад")
 async def go_back(message: types.Message, state: FSMContext):
-    await state.clear()
-    await send_welcome(message)
+    current_state = await state.get_state()
+
+    if current_state == PaymentState.waiting_for_payment_method.state:
+        # Возвращаемся на выбор срока подписки
+        buttons = [
+            [KeyboardButton(text="1 мес. (150 руб.)"), KeyboardButton(text="3 мес. (300 руб.)")],
+            [KeyboardButton(text="6 мес. (600 руб.)"), KeyboardButton(text="12 мес. (1200 руб.)")],
+            [KeyboardButton(text="⬅️ Назад")]
+        ]
+        await message.answer("🕘 Выберите срок подписки", reply_markup=ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True))
+        await state.set_state(None)  # Выход из состояния
+
+    else:
+        await state.clear()  # Очищаем состояние
+        await send_welcome(message)
 
 
 # Обработка нажатия кнопки "Купить"
@@ -118,12 +113,11 @@ async def buy(message: types.Message):
     ]
     await message.answer("🕘 Выберите срок подписки", reply_markup=ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True))
 
-
 # Обработка выбора срока подписки и способов оплаты
 @dp.message(F.text.in_({"1 мес. (150 руб.)", "3 мес. (300 руб.)", "6 мес. (600 руб.)", "12 мес. (1200 руб.)"}))
 async def choose_payment_method(message: types.Message, state: FSMContext):
     duration_mapping = {
-        "1 мес. (150 руб.)": (1, 2),
+        "1 мес. (150 руб.)": (1, 150),
         "3 мес. (300 руб.)": (3, 300),
         "6 мес. (600 руб.)": (6, 600),
         "12 мес. (1200 руб.)": (12, 1200)
@@ -132,19 +126,29 @@ async def choose_payment_method(message: types.Message, state: FSMContext):
     await state.update_data(duration=duration, amount=amount)
 
     # Клавиатура
-    buttons = ["💸 С карты на карту", "💳 Банковской картой", "⬅️ Назад"]
-    await message.answer(f"Вы выбрали подписку на {duration} мес. Стоимость: {amount} руб.\n\nВыберите способ оплаты:",
-                         reply_markup=await kb_builder(buttons))
+    buttons = [
+        [KeyboardButton(text="💸 С карты на карту"), KeyboardButton(text="💳 Банковской картой")],
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+    await message.answer(
+        f"Вы выбрали подписку на {duration} мес. Стоимость: {amount} руб.\n\nВыберите способ оплаты:",
+        reply_markup=keyboard
+    )
+
     await state.set_state(PaymentState.waiting_for_payment_method)
 
 
 # Обработка нажатия кнопки "💸 С карты на карту"
 @dp.message(F.text == "💸 С карты на карту", PaymentState.waiting_for_payment_method)
 async def confirm_payment(message: types.Message, state: FSMContext):
-    buttons = ["✅ Подтвердить", "⬅️ Назад"]
+    await message.answer("Генерирую номер карты для оплаты…🍓")
+    await asyncio.sleep(5)
+    buttons = ["⬅️ Назад"]
     await state.set_state(PaymentState.waiting_for_screenshot)
     await message.answer(
-        "Реквизиты для оплаты:\n> Номер телефона для перевода по СБП: \n> Банк получателя: \n> Имя получателя: \n\n\n❗️После оплаты, пожалуйста, отправьте скриншот успешного перевода с суммой выбранной подписки ответным сообщением.❗️",
+        "Банковская карта для перевода сгенерирована!\n\nНомер карты: `123123123` (можно скопировать, если нажать на цифры)\nБанк-получатель: Альфа-Банк\n\n\n❗️После оплаты, пожалуйста, пришлите скриншот успешного перевода из вашего банковского приложения.❗️\nТак я смогу быстрее проверить и подтвердить платёж.",
         reply_markup=await kb_builder(buttons), parse_mode="Markdown")
 
 
@@ -159,7 +163,7 @@ async def handle_screenshot(message: types.Message, state: FSMContext):
                          reply_markup=await admin_keyboard(user_id, duration))
 
     await state.clear()
-    await message.answer("⏳ Пожалуйста, ожидайте. Администратор проверяет платеж.", reply_markup=await main_menu())
+    await message.answer("⏳ Пожалуйста, ожидайте. Ищу ваш платеж. Обычно это занимает до 10 минут.", reply_markup=await main_menu())
 
 
 @dp.message(PaymentState.waiting_for_screenshot)
@@ -194,8 +198,8 @@ async def process_callback_admin(callback_query: types.CallbackQuery):
             keyboard = InlineKeyboardMarkup(inline_keyboard=[[instruction_button]])
             await bot.send_message(
                 user_id,
-                f"🥳 Ваш платеж подтвержден.\nВот ваш ключ на {duration} мес. 🔑: \n\n<code>{key[0]}</code>\n\n\n❗️❗️❗️Нажмите на ключ, чтобы скопировать его, и воспользуйтесь инструкцией по подключению, которая доступна по кнопке ниже.❗️❗️❗️",
-                parse_mode="html",
+                f"🥳 Ваш платеж подтвержден.\nВот ваш ключ на {duration} мес. 🔑: \n\n`{key[0]}`\n\n\n❗️❗️❗️Нажмите на ключ, чтобы скопировать его, и воспользуйтесь инструкцией по подключению, которая доступна по кнопке ниже.❗️❗️❗️",
+                parse_mode="Markdown",
                 reply_markup=keyboard
             )
         else:
@@ -256,7 +260,7 @@ async def pay_with_card(message: types.Message, state: FSMContext):
 
     # Отправка ссылки для оплаты пользователю
     await message.answer(
-        f"Для оплаты перейдите по ссылке: {payment_url}\nПосле оплаты бот автоматически подтвердит ваш платеж.",
+        f"Для оплаты перейдите по ссылке: {payment_url}\nПосле оплаты бот автоматически подтвердит ваш платеж и выдаст оплаченный ключ.",
         reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="⬅️ Назад")]], resize_keyboard=True))
 
     # Ожидание и проверка платежа
@@ -278,7 +282,7 @@ async def pay_with_card(message: types.Message, state: FSMContext):
             # Отправка сообщения с ключом и инструкцией
             keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🗒 Инструкция по подключению")]], resize_keyboard=True)
             await message.answer(
-                f"<b>Ваш платеж подтвержден.</b>\nВот ваш ключ на {duration} мес.: <code>{key[0]}</code>\n\n<b>❗️Нажмите на ключ, чтобы скопировать его❗️</b>\n\nИнструкция по подключению доступна по кнопке ниже.",
+                f"<b>Ваш платеж подтвержден.</b>\nВот ваш ключ на {duration} мес.: \n\n<code>{key[0]}</code>\n\n<b>❗️Нажмите на ключ, чтобы скопировать его❗️</b>\n\nИнструкция по подключению доступна по кнопке ниже.",
                 parse_mode='HTML',
                 reply_markup=keyboard
             )
@@ -408,17 +412,30 @@ async def buy(message: types.Message):
     await message.answer(
         "✏️ Инструкция по подключению доступна по ссылке: https://telegra.ph/Nastrojka-klienta-dlya-VPN-Na-PK-iOS-i-Android-08-08",
         reply_markup=keyboard)
+    
 
+# Команда для входа в админ-панель
+@dp.message(Command('admin'))
+async def admin_panel(message: types.Message):
+    if str(message.from_user.id) == ADMIN_ID:
+        buttons = [
+            [KeyboardButton(text="🔑 Добавить ключи")],
+            [KeyboardButton(text="📢 Отправить всем сообщение")],
+            [KeyboardButton(text="👀 Посмотреть активные ключи")]
+        ]
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+        await message.answer("Выберите действие:", reply_markup=keyboard)
+    else:
+        await message.answer("❌ У вас нет прав для выполнения этой команды. ❌")
 
-# Команда для загрузки ключей (только для администратора)
-@dp.message(Command('add_keys'))
-async def add_keys(message: types.Message, state: FSMContext):
+# Обработка нажатия кнопки "🔑 Добавить ключи"
+@dp.message(F.text == "🔑 Добавить ключи")
+async def add_keys_button(message: types.Message, state: FSMContext):
     if str(message.from_user.id) == ADMIN_ID:
         await message.answer("🕘 Отправьте срок действия ключей (в месяцах):")
         await state.set_state(AddKeysState.waiting_for_duration)
     else:
         await message.answer("❌ У вас нет прав для выполнения этой команды. ❌")
-
 
 # Ожидание ввода срока действия ключей от администратора
 @dp.message(AddKeysState.waiting_for_duration, F.text)
@@ -427,7 +444,6 @@ async def process_duration(message: types.Message, state: FSMContext):
     await state.update_data(duration=duration)
     await state.set_state(AddKeysState.waiting_for_keys)
     await message.answer("🔑 Теперь отправьте ключи, каждый с новой строки:")
-
 
 # Ожидание ключей и сохранение их в базе данных
 @dp.message(AddKeysState.waiting_for_keys, F.text)
@@ -442,15 +458,14 @@ async def process_keys(message: types.Message, state: FSMContext):
     await message.answer("Ключи успешно добавлены! ✅")
 
 
-# Команда для массовой рассылки сообщения (только для администратора)
-@dp.message(Command('broadcast'))
-async def broadcast(message: types.Message, state: FSMContext):
+# Обработка нажатия кнопки "📢 Отправить всем сообщение"
+@dp.message(F.text == "📢 Отправить всем сообщение")
+async def broadcast_button(message: types.Message, state: FSMContext):
     if str(message.from_user.id) == ADMIN_ID:
         await message.answer("📝 Отправьте сообщение для рассылки всем пользователям.")
         await state.set_state(BroadcastState.waiting_for_message)
     else:
         await message.answer("❌ У вас нет прав для выполнения этой команды. ❌")
-
 
 # Ожидание от администратора текста для рассылки
 @dp.message(BroadcastState.waiting_for_message, F.text)
@@ -467,9 +482,9 @@ async def process_broadcast_message(message: types.Message, state: FSMContext):
     await message.answer("Рассылка завершена. ✅")
 
 
-# Команда для просмотра активных ключей (только для администратора)
-@dp.message(Command('view_active_keys'))
-async def view_active_keys(message: types.Message):
+# Обработка нажатия кнопки "👀 Посмотреть активные ключи"
+@dp.message(F.text == "👀 Посмотреть активные ключи")
+async def view_active_keys_button(message: types.Message):
     if str(message.from_user.id) == ADMIN_ID:
         cursor.execute('SELECT key, duration FROM vpn_keys WHERE is_used = 0')
         active_keys = cursor.fetchall()
